@@ -144,14 +144,16 @@ int	main(int argc, char *const *argv)
 
 	struct sockaddr_in *ipv4 = (struct sockaddr_in*)tgtinfo->ai_addr;
 
-	g_state.sockfd = socket(AF_INET, SOCK_RAW, tgtinfo->ai_protocol);
+	g_state.sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	if (g_state.sockfd == -1)
 		error(2, errno, "failed to create socket");
+
 	// if (connect(g_state.sockfd, &g_state.sockaddr, INET_ADDRSTRLEN) != 0)
 	// 	error(2, errno, "error trying to connect to socket");
 
 
 	g_state.pid = getpid();
+	g_state.sockaddr = *(struct sockaddr*)ipv4;
 	g_state.ping_tgt_addr = ipv4->sin_addr;
 	g_state.ping_tgt_name = strdup(tgtinfo->ai_canonname);
 	gettimeofday(&g_state.started_at, NULL);
@@ -171,9 +173,38 @@ int	main(int argc, char *const *argv)
 	finish_ping();
 }
 
+// Thank you RFC1071 for giving me the algorithm
+uint16_t	get_inet_checksum(void *addr, size_t count)
+{
+	/* Compute Internet Checksum for "count" bytes
+	*         beginning at location "addr".
+	*/
+	uint32_t	sum = 0;
+	uint16_t	*data = (uint16_t*)addr;
+
+	while( count > 1 )  {
+		/*  This is the inner loop */
+			sum += * data++;
+			count -= 2;
+	}
+
+		/*  Fold 32-bit sum to 16 bits */
+	while (sum>>16)
+		sum = (sum & 0xffff) + (sum >> 16);
+
+		/*  Add left-over byte, if any */
+	if( count > 0 )
+			sum += * (uint8_t *) data;
+
+	return ~sum;
+}
+
 void	send_ping()
 {
-	unsigned char	buf[512];
+	unsigned char	buf[64] = {0};
+	// size_t			packet_len = sizeof(struct icmp) + sizeof(struct timeval);
+	size_t			packet_len = 56;
+
 	struct icmp *icmp_packet = (struct icmp*)buf;
 	icmp_packet->icmp_type = ICMP_ECHO;
 	icmp_packet->icmp_code = 0;
@@ -182,7 +213,9 @@ void	send_ping()
 	gettimeofday((struct timeval*)icmp_packet->icmp_data, NULL);
 	// TODO: Calculate checksum
 	icmp_packet->icmp_cksum = 0;
-	sendto(g_state.sockfd, buf, sizeof(*icmp_packet) + sizeof(struct timeval), 0, &g_state.sockaddr, INET_ADDRSTRLEN);
+	uint16_t checksum = get_inet_checksum(buf, packet_len);
+	icmp_packet->icmp_cksum = checksum;
+	sendto(g_state.sockfd, buf, packet_len, 0, &g_state.sockaddr, INET_ADDRSTRLEN);
 }
 
 void	sigalrm_handler()
@@ -190,7 +223,7 @@ void	sigalrm_handler()
 	// At least on this platform, sig_atomic_t is not actually atomic and
 	// doesn't need atomic fetch operations?
 	// So atomic_fetch_sub(&g_state.num_to_send, -1) doesn't work
-	if (g_state.num_to_send == -1 || --g_state.num_to_send > 0)
+	if (g_state.num_to_send == -1 || g_state.num_to_send-- > 0)
 	{
 		// TODO: Send data...
 		send_ping();
@@ -212,7 +245,7 @@ void	finish_ping()
 	struct timeval now = {}, elapsed = {};
 	gettimeofday(&now, NULL);
 	timersub(&now, &g_state.started_at, &elapsed);
-	double seconds_elapsed = elapsed.tv_sec + (elapsed.tv_usec / 1e9);
+	double seconds_elapsed = elapsed.tv_sec + ((double)elapsed.tv_usec / 1e9);
 	printf("%u packets transmitted, %u received, %.0f%% packet loss, time %.0fms\n",
 		g_state.sent, g_state.received, packet_loss * 100, seconds_elapsed * 1000);
 
