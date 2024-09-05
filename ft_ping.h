@@ -37,11 +37,11 @@ struct ft_ping_state
 	volatile uint	sent;
 	unsigned int	received;
 
-	struct {	// Lightweight vector of each received packet's RTT
+	struct Vector {	// Lightweight vector of each received packet's RTT
 		float	*data;
 		size_t	size;
 		size_t	capacity;
-	}	rtt_collection;
+	}	rtt;
 };
 
 extern struct ft_ping_state	g_state;

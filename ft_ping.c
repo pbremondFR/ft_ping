@@ -26,19 +26,12 @@ struct ft_ping_state	g_state = {
 	.ping_tgt_addr = {},
 	.sent = 0,
 	.received = 0,
+	.rtt = {
+		.data = NULL,
+		.size = 0,
+		.capacity = 0,
+	},
 };
-
-struct icmphdr	get_icmp_echo_header(uint16_t id, uint16_t seq)
-{
-	return (struct icmphdr){
-		.type = ICMP_ECHO,
-		.code = 0,
-		.un.echo = {
-			.id = id,
-			.sequence = seq
-		}
-	};
-}
 
 static long parse_numerical_flag(char *arg)
 {
@@ -147,7 +140,14 @@ int	main(int argc, char *const *argv)
 	g_state.pid = getpid();
 	g_state.sockaddr = *(struct sockaddr*)ipv4;
 	g_state.ping_tgt_addr = ipv4->sin_addr;
-	g_state.ping_tgt_name = strdup(tgtinfo->ai_canonname);
+	g_state.ping_tgt_name = argv[optind];
+	g_state.rtt = (struct Vector){
+		.data = malloc(8 * sizeof(float)),
+		.size = 0,
+		.capacity = 8
+	};
+	if (!g_state.ping_tgt_name || !g_state.rtt.data)
+		error(1, errno, "fatal error");
 
 	freeaddrinfo(tgtinfo);
 	signal(SIGALRM, sigalrm_handler);
@@ -161,12 +161,26 @@ int	main(int argc, char *const *argv)
 	sigalrm_handler();
 	// alarm(g_state.interval);
 
-	// receive_loop();
-	// while (g_state.num_to_send > 0)
-	// 	;
 	while (true)
 		;
-	// finish_ping();
+}
+
+void	add_rtt_to_vector(struct Vector *vec, float rtt)
+{
+	if (vec->size == vec->capacity)
+	{
+		vec->data = reallocarray(vec->data, vec->capacity * 2, sizeof(vec->data[0]));
+		if (!vec->data)
+		{
+			vec->data = reallocarray(vec->data, ++vec->capacity, sizeof(vec->data[0]));
+			if (!vec->data)
+				error(1, errno, "failed to store RTT");
+		}
+		else
+			vec->capacity *= 2;
+	}
+	vec->data[vec->size++] = rtt;
+	return;
 }
 
 void	receive_single(uint16_t sequence_num)
@@ -207,6 +221,8 @@ void	receive_single(uint16_t sequence_num)
 		gettimeofday(&now, NULL);
 		timersub(&now, sent_time, &delta);
 		float rtt_ms = ((float)delta.tv_sec * 1000.0f) + ((float)delta.tv_usec / 1000.0f);
+
+		add_rtt_to_vector(&g_state.rtt, rtt_ms);
 
 		if (icmp->icmp_seq != sequence_num)
 			printf("FUCKED UP ICMP SEQUENCE\n");
@@ -349,9 +365,25 @@ void	finish_ping()
 	printf("%u packets transmitted, %u received, %.0f%% packet loss\n",
 		g_state.sent, g_state.received, packet_loss * 100);
 
+	float min_rtt = +INFINITY;
+	float max_rtt = -INFINITY;
+	float avg_rtt = 0.0f;
+	for (size_t i = 0; i < g_state.rtt.size; ++i)
+	{
+		min_rtt = min_rtt > g_state.rtt.data[i] ? g_state.rtt.data[i] : min_rtt;
+		max_rtt = max_rtt < g_state.rtt.data[i] ? g_state.rtt.data[i] : max_rtt;
+		avg_rtt += g_state.rtt.data[i];
+	}
+	avg_rtt /= g_state.rtt.size;
+
+	float squared_differences = 0.0f;
+	for (size_t i = 0; i < g_state.rtt.size; ++i)
+		squared_differences += powf(g_state.rtt.data[i] - avg_rtt, 2);
+	float stddev = sqrtf(squared_differences / (g_state.rtt.size - 1));
+
 	printf("round-trip min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
-		0.0f, 0.0f, 0.0f, 0.0f);
-	free(g_state.ping_tgt_name);
+		min_rtt, avg_rtt, max_rtt, stddev);
+	free(g_state.rtt.data);
 	close(g_state.sockfd);
 	exit(0);
 }
