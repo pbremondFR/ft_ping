@@ -177,9 +177,9 @@ void	receive_single(uint16_t sequence_num)
 	struct sockaddr		recv_sockaddr = {};
 	socklen_t			recv_socklen = sizeof(recv_sockaddr);
 
-	ssize_t received = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
+	ssize_t bytes_recved = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
 		&recv_sockaddr, &recv_socklen);
-	if (received < 0)
+	if (bytes_recved < 0)
 		error(3, errno, "recvfrom call failed");
 
 	struct ip *ip = (struct ip*)recv_buf;
@@ -187,30 +187,38 @@ void	receive_single(uint16_t sequence_num)
 		return;
 	// ip_hl: header length, number of 4-byte words in IP header.
 	struct icmp *icmp = (struct icmp*)(recv_buf + (ip->ip_hl * 4));
-	// printf("Infotype? %s, type %d\n", ICMP_INFOTYPE(icmp->icmp_type) ? "YES" : "no", icmp->icmp_type);
 
-	if (icmp->icmp_id != (uint16_t)g_state.pid) {
-		printf("fucked up PID: %d, mine is %d, getpid() is %d\n", icmp->icmp_id, g_state.pid, getpid());
+	if (!interesting_icmp(icmp->icmp_type))
 		return;
-	}
+
+	int gai_err;
+	if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
+		error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
+
+	printf("%zu bytes from %s: ", bytes_recved - (ip->ip_hl * 4), hostname);
 
 	if (icmp->icmp_type == ICMP_ECHOREPLY)
 	{
-		int gai_err;
-		if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
-			error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
+		if (icmp->icmp_id != (uint16_t)g_state.pid)
+			return;
+
+		struct timeval now = {}, delta = {};
+		struct timeval *sent_time = (struct timeval*)icmp->icmp_data;
+		gettimeofday(&now, NULL);
+		timersub(&now, sent_time, &delta);
+		float rtt_ms = ((float)delta.tv_sec * 1000.0f) + ((float)delta.tv_usec / 1000.0f);
 
 		if (icmp->icmp_seq != sequence_num)
 			printf("FUCKED UP ICMP SEQUENCE\n");
 
 		g_state.received++;
-		printf("%zu bytes from %s: icmp_seq=%d, ttl=%d, time=%.03f ms\n",
-			received - (ip->ip_hl * 4), hostname, icmp->icmp_seq, ip->ip_ttl, 0.0f);
+		printf("icmp_seq=%d, ttl=%d, time=%.03f ms\n", icmp->icmp_seq, ip->ip_ttl, rtt_ms);
 	}
 	else
 	{
-		printf("IP Hdr Dump:\n");
-		printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src      Dst     Data\n");
+		printf("Infotype? %s, type %d\n", ICMP_INFOTYPE(icmp->icmp_type) ? "YES" : "no", icmp->icmp_type);
+		// printf("IP Hdr Dump:\n");
+		// printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src      Dst     Data\n");
 	}
 }
 
