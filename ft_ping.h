@@ -26,7 +26,6 @@ struct ft_ping_state
 	pid_t			pid;
 	char			*ping_tgt_name;
 	struct in_addr	ping_tgt_addr;
-	struct timeval	started_at;
 	volatile uint	sent;
 	unsigned int	received;
 };

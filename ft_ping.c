@@ -24,7 +24,6 @@ struct ft_ping_state	g_state = {
 	.pid = 0,
 	.ping_tgt_name = NULL,
 	.ping_tgt_addr = {},
-	.started_at = {},
 	.sent = 0,
 	.received = 0,
 };
@@ -149,8 +148,8 @@ int	main(int argc, char *const *argv)
 	g_state.sockaddr = *(struct sockaddr*)ipv4;
 	g_state.ping_tgt_addr = ipv4->sin_addr;
 	g_state.ping_tgt_name = strdup(tgtinfo->ai_canonname);
-	gettimeofday(&g_state.started_at, NULL);
 
+	freeaddrinfo(tgtinfo);
 	signal(SIGALRM, sigalrm_handler);
 	signal(SIGINT, finish_ping);
 
@@ -159,10 +158,60 @@ int	main(int argc, char *const *argv)
 	printf("PING %s (%s): %ld data bytes, id %#06x = %d\n",
 		g_state.ping_tgt_name, ip_str_buf, PACKET_LEN - sizeof(struct icmphdr), g_state.pid, g_state.pid);
 
-	alarm(g_state.interval);
+	sigalrm_handler();
+	// alarm(g_state.interval);
 
-	receive_loop();
+	// receive_loop();
+	// while (g_state.num_to_send > 0)
+	// 	;
+	while (true)
+		;
 	// finish_ping();
+}
+
+void	receive_single(uint16_t sequence_num)
+{
+	char				hostname[256];
+	char				recv_buf[256];
+	char				ip_str[INET_ADDRSTRLEN] = {0};
+	struct sockaddr		recv_sockaddr = {};
+	socklen_t			recv_socklen = sizeof(recv_sockaddr);
+
+	ssize_t received = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
+		&recv_sockaddr, &recv_socklen);
+	if (received < 0)
+		error(3, errno, "recvfrom call failed");
+
+	struct ip *ip = (struct ip*)recv_buf;
+	if (ip->ip_p != IPPROTO_ICMP)
+		return;
+	// ip_hl: header length, number of 4-byte words in IP header.
+	struct icmp *icmp = (struct icmp*)(recv_buf + (ip->ip_hl * 4));
+	// printf("Infotype? %s, type %d\n", ICMP_INFOTYPE(icmp->icmp_type) ? "YES" : "no", icmp->icmp_type);
+
+	if (icmp->icmp_id != (uint16_t)g_state.pid) {
+		printf("fucked up PID: %d, mine is %d, getpid() is %d\n", icmp->icmp_id, g_state.pid, getpid());
+		return;
+	}
+
+	if (icmp->icmp_type == ICMP_ECHOREPLY)
+	{
+		int gai_err;
+		if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
+			error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
+
+		if (icmp->icmp_seq != sequence_num)
+			printf("FUCKED UP ICMP SEQUENCE\n");
+
+		g_state.received++;
+		printf("%zu bytes from %s: icmp_seq=%d, ttl=%d, time=%.03f ms\n",
+			received - (ip->ip_hl * 4), hostname, icmp->icmp_seq, ip->ip_ttl, 0.0f);
+	}
+	else
+	{
+		printf("IP Hdr Dump:\n");
+		printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src      Dst     Data\n");
+	}
 }
 
 void	receive_loop()
@@ -236,7 +285,7 @@ uint16_t	get_inet_checksum(void *addr, size_t count)
 	return ~sum;
 }
 
-void	send_ping()
+void	send_ping(uint16_t sequence_num)
 {
 	const size_t	packet_len = PACKET_LEN;
 	unsigned char	buf[PACKET_LEN] = {
@@ -257,7 +306,7 @@ void	send_ping()
 	icmp_packet->icmp_type = ICMP_ECHO;
 	icmp_packet->icmp_code = 0;
 	icmp_packet->icmp_id = (uint16_t)g_state.pid;
-	icmp_packet->icmp_seq = g_state.sent++;
+	icmp_packet->icmp_seq = sequence_num;
 	gettimeofday((struct timeval*)icmp_packet->icmp_data, NULL);
 	icmp_packet->icmp_cksum = get_inet_checksum(buf, packet_len);
 	sendto(g_state.sockfd, buf, packet_len, 0, &g_state.sockaddr, INET_ADDRSTRLEN);
@@ -270,8 +319,11 @@ void	sigalrm_handler()
 	// So atomic_fetch_sub(&g_state.num_to_send, -1) doesn't work
 	if (g_state.num_to_send == -1 || g_state.num_to_send-- > 0)
 	{
-		send_ping();
+		uint16_t seq = g_state.sent++;
+		send_ping(seq);
 		alarm(g_state.interval);
+		// g_state.num_to_send--;
+		receive_single(seq);
 	}
 	else if (g_state.num_to_send <= 0)
 	{
@@ -286,13 +338,12 @@ void	finish_ping()
 
 	float packet_loss = (float)g_state.received / g_state.sent;
 	packet_loss = 1.0f - (isnan(packet_loss) ? 0.0f : packet_loss);
-	struct timeval now = {}, elapsed = {};
-	gettimeofday(&now, NULL);
-	timersub(&now, &g_state.started_at, &elapsed);
-	double seconds_elapsed = elapsed.tv_sec + ((double)elapsed.tv_usec / 1e9);
-	printf("%u packets transmitted, %u received, %.0f%% packet loss, time %.0fms\n",
-		g_state.sent, g_state.received, packet_loss * 100, seconds_elapsed * 1000);
+	printf("%u packets transmitted, %u received, %.0f%% packet loss\n",
+		g_state.sent, g_state.received, packet_loss * 100);
 
+	printf("round-trip min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
+		0.0f, 0.0f, 0.0f, 0.0f);
 	free(g_state.ping_tgt_name);
+	close(g_state.sockfd);
 	exit(0);
 }
