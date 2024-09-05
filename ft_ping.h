@@ -10,6 +10,8 @@
 # include <time.h>
 # include <sys/time.h>
 
+#define PACKET_LEN	(sizeof(struct icmphdr) + sizeof(struct timeval) + 40)
+
 struct ft_ping_state
 {
 	// Volatile just in case signals fuck this up
@@ -33,5 +35,6 @@ extern struct ft_ping_state	g_state;
 
 void	sigalrm_handler();
 void	finish_ping();
+void	receive_loop();
 
 #endif

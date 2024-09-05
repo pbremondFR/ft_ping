@@ -116,7 +116,7 @@ int	main(int argc, char *const *argv)
 	struct addrinfo hints = {};
 	struct addrinfo *tgtinfo;
 	hints.ai_family = AF_INET;
-	hints.ai_socktype = 0;
+	hints.ai_socktype = SOCK_RAW; // XXX: 0 of SOCK_RAW?
 	hints.ai_protocol = 0;
 	hints.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG | AI_CANONNAME;
 
@@ -147,10 +147,9 @@ int	main(int argc, char *const *argv)
 	g_state.sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	if (g_state.sockfd == -1)
 		error(2, errno, "failed to create socket");
-
 	// if (connect(g_state.sockfd, &g_state.sockaddr, INET_ADDRSTRLEN) != 0)
 	// 	error(2, errno, "error trying to connect to socket");
-
+	setsockopt(g_state.sockfd, SOL_IP, IP_TTL, &g_state.ttl, sizeof(g_state.ttl));
 
 	g_state.pid = getpid();
 	g_state.sockaddr = *(struct sockaddr*)ipv4;
@@ -165,12 +164,53 @@ int	main(int argc, char *const *argv)
 	char ip_str_buf[3 * 4 + 4];
 	inet_ntop(AF_INET, &g_state.ping_tgt_addr, ip_str_buf, sizeof(ip_str_buf));
 	// TODO: Check if we really need 56 bytes?
-	printf("PING %s (%s): 56 data bytes\n", g_state.ping_tgt_name, ip_str_buf);
+	printf("PING %s (%s): 56 data bytes, id %#06x = %d\n",
+		g_state.ping_tgt_name, ip_str_buf, g_state.pid, g_state.pid);
 
 	alarm(g_state.interval);
 
-	while (true) ;
-	finish_ping();
+	receive_loop();
+	// finish_ping();
+}
+
+void	receive_loop()
+{
+	char				hostname[256];
+	char				recv_buf[256];
+	char				ip_str[INET_ADDRSTRLEN] = {0};
+	struct sockaddr		recv_sockaddr = {};
+	socklen_t			recv_socklen = sizeof(recv_sockaddr);
+
+	while (true)
+	{
+		ssize_t received = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
+			&recv_sockaddr, &recv_socklen);
+		if (received < 0)
+			error(3, errno, "recvfrom call failed");
+
+		struct ip *ip = (struct ip*)recv_buf;
+		if (ip->ip_p != IPPROTO_ICMP)
+		{
+			printf("ip proto not ICMP\n");
+			continue;
+		}
+		// ip_hl: header length, number of 4-byte words in IP header.
+		struct icmp *icmp = (struct icmp*)(recv_buf + (ip->ip_hl * 4));
+
+		if (icmp->icmp_id != g_state.pid || (g_state.verbose == false && icmp->icmp_type != ICMP_ECHOREPLY))
+		{
+			printf("PID filter or ECHOREPLY filter: ICMP ID %d, PID: %d\n", icmp->icmp_id, g_state.pid);
+			continue;
+		}
+
+		int err;
+		if ((err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
+			error(3, 0, "getnameinfo() call failed: %s", gai_strerror(err));
+
+		g_state.received++;
+		printf("%zu bytes from %s: icmp_seq=%d, ttl=%d, time=%.03f ms\n",
+			received - (ip->ip_hl * 4), hostname, icmp->icmp_seq, ip->ip_ttl, 0.0f);
+	}
 }
 
 // Thank you RFC1071 for giving me the algorithm
@@ -201,9 +241,20 @@ uint16_t	get_inet_checksum(void *addr, size_t count)
 
 void	send_ping()
 {
-	unsigned char	buf[64] = {0};
-	// size_t			packet_len = sizeof(struct icmp) + sizeof(struct timeval);
-	size_t			packet_len = 56;
+	const size_t	packet_len = PACKET_LEN;
+	unsigned char	buf[PACKET_LEN] = {
+		/* ICMP header: 8 bytes */
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		/* ICMP data: struct timeval (16 bytes)... */
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		/* ICMP data: ... This data pattern */
+		0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+		0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+		0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+		0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+		0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27
+	};
 
 	struct icmp *icmp_packet = (struct icmp*)buf;
 	icmp_packet->icmp_type = ICMP_ECHO;
@@ -211,10 +262,7 @@ void	send_ping()
 	icmp_packet->icmp_id = g_state.pid;
 	icmp_packet->icmp_seq = g_state.sent++;
 	gettimeofday((struct timeval*)icmp_packet->icmp_data, NULL);
-	// TODO: Calculate checksum
-	icmp_packet->icmp_cksum = 0;
-	uint16_t checksum = get_inet_checksum(buf, packet_len);
-	icmp_packet->icmp_cksum = checksum;
+	icmp_packet->icmp_cksum = get_inet_checksum(buf, packet_len);
 	sendto(g_state.sockfd, buf, packet_len, 0, &g_state.sockaddr, INET_ADDRSTRLEN);
 }
 
@@ -225,7 +273,6 @@ void	sigalrm_handler()
 	// So atomic_fetch_sub(&g_state.num_to_send, -1) doesn't work
 	if (g_state.num_to_send == -1 || g_state.num_to_send-- > 0)
 	{
-		// TODO: Send data...
 		send_ping();
 		alarm(g_state.interval);
 	}
