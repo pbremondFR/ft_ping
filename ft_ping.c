@@ -108,10 +108,6 @@ int	main(int argc, char *const *argv)
 	{
 		error(1, 0, "missing argument");
 	}
-	for (int i = optind; i < argc; ++i)
-	{
-		printf("> %s\n", argv[i]);
-	}
 
 	struct addrinfo hints = {};
 	struct addrinfo *tgtinfo;
@@ -140,15 +136,13 @@ int	main(int argc, char *const *argv)
 		}
 	}
 	else
-		error(2, result, "getaddrinfo call failed");
+		error(2, 0, "unknown host: %s", gai_strerror(result));
 
 	struct sockaddr_in *ipv4 = (struct sockaddr_in*)tgtinfo->ai_addr;
 
 	g_state.sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	if (g_state.sockfd == -1)
 		error(2, errno, "failed to create socket");
-	// if (connect(g_state.sockfd, &g_state.sockaddr, INET_ADDRSTRLEN) != 0)
-	// 	error(2, errno, "error trying to connect to socket");
 	setsockopt(g_state.sockfd, SOL_IP, IP_TTL, &g_state.ttl, sizeof(g_state.ttl));
 
 	g_state.pid = getpid();
@@ -160,12 +154,10 @@ int	main(int argc, char *const *argv)
 	signal(SIGALRM, sigalrm_handler);
 	signal(SIGINT, finish_ping);
 
-	// TODO: start ping
 	char ip_str_buf[3 * 4 + 4];
 	inet_ntop(AF_INET, &g_state.ping_tgt_addr, ip_str_buf, sizeof(ip_str_buf));
-	// TODO: Check if we really need 56 bytes?
-	printf("PING %s (%s): 56 data bytes, id %#06x = %d\n",
-		g_state.ping_tgt_name, ip_str_buf, g_state.pid, g_state.pid);
+	printf("PING %s (%s): %ld data bytes, id %#06x = %d\n",
+		g_state.ping_tgt_name, ip_str_buf, PACKET_LEN - sizeof(struct icmphdr), g_state.pid, g_state.pid);
 
 	alarm(g_state.interval);
 
@@ -190,26 +182,31 @@ void	receive_loop()
 
 		struct ip *ip = (struct ip*)recv_buf;
 		if (ip->ip_p != IPPROTO_ICMP)
-		{
-			printf("ip proto not ICMP\n");
 			continue;
-		}
 		// ip_hl: header length, number of 4-byte words in IP header.
 		struct icmp *icmp = (struct icmp*)(recv_buf + (ip->ip_hl * 4));
+		printf("Infotype? %s, type %d\n", ICMP_INFOTYPE(icmp->icmp_type) ? "YES" : "no", icmp->icmp_type);
 
-		if (icmp->icmp_id != g_state.pid || (g_state.verbose == false && icmp->icmp_type != ICMP_ECHOREPLY))
-		{
-			printf("PID filter or ECHOREPLY filter: ICMP ID %d, PID: %d\n", icmp->icmp_id, g_state.pid);
+		if (icmp->icmp_id != (uint16_t)g_state.pid) {
+			printf("fucked up PID: %d, mine is %d, getpid() is %d\n", icmp->icmp_id, g_state.pid, getpid());
 			continue;
 		}
 
-		int err;
-		if ((err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
-			error(3, 0, "getnameinfo() call failed: %s", gai_strerror(err));
+		if (icmp->icmp_type == ICMP_ECHOREPLY)
+		{
+			int gai_err;
+			if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
+				error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
 
-		g_state.received++;
-		printf("%zu bytes from %s: icmp_seq=%d, ttl=%d, time=%.03f ms\n",
-			received - (ip->ip_hl * 4), hostname, icmp->icmp_seq, ip->ip_ttl, 0.0f);
+			g_state.received++;
+			printf("%zu bytes from %s: icmp_seq=%d, ttl=%d, time=%.03f ms\n",
+				received - (ip->ip_hl * 4), hostname, icmp->icmp_seq, ip->ip_ttl, 0.0f);
+		}
+		else
+		{
+			printf("IP Hdr Dump:\n");
+			printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src      Dst     Data\n");
+		}
 	}
 }
 
@@ -259,7 +256,7 @@ void	send_ping()
 	struct icmp *icmp_packet = (struct icmp*)buf;
 	icmp_packet->icmp_type = ICMP_ECHO;
 	icmp_packet->icmp_code = 0;
-	icmp_packet->icmp_id = g_state.pid;
+	icmp_packet->icmp_id = (uint16_t)g_state.pid;
 	icmp_packet->icmp_seq = g_state.sent++;
 	gettimeofday((struct timeval*)icmp_packet->icmp_data, NULL);
 	icmp_packet->icmp_cksum = get_inet_checksum(buf, packet_len);
@@ -288,7 +285,7 @@ void	finish_ping()
 	printf("--- %s ping statistics ---\n", g_state.ping_tgt_name);
 
 	float packet_loss = (float)g_state.received / g_state.sent;
-	packet_loss = isnan(packet_loss) ? 0.0f : packet_loss;
+	packet_loss = 1.0f - (isnan(packet_loss) ? 0.0f : packet_loss);
 	struct timeval now = {}, elapsed = {};
 	gettimeofday(&now, NULL);
 	timersub(&now, &g_state.started_at, &elapsed);
