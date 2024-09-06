@@ -155,32 +155,15 @@ int	main(int argc, char *const *argv)
 
 	char ip_str_buf[3 * 4 + 4];
 	inet_ntop(AF_INET, &g_state.ping_tgt_addr, ip_str_buf, sizeof(ip_str_buf));
-	printf("PING %s (%s): %ld data bytes, id %#06x = %d\n",
-		g_state.ping_tgt_name, ip_str_buf, PACKET_LEN - sizeof(struct icmphdr),
-		g_state.pid, g_state.pid);
-
+	printf("PING %s (%s): %ld data bytes",
+		g_state.ping_tgt_name, ip_str_buf, PACKET_LEN - sizeof(struct icmphdr));
+	if (g_state.verbose)
+		printf(", id 0x%04x = %d", g_state.pid, g_state.pid);
+	putchar('\n');
 	sigalrm_handler();
 	// alarm(g_state.interval);
 
 	receive_loop();
-}
-
-void	add_rtt_to_vector(struct Vector *vec, float rtt)
-{
-	if (vec->size == vec->capacity)
-	{
-		vec->data = reallocarray(vec->data, vec->capacity * 2, sizeof(vec->data[0]));
-		if (!vec->data)
-		{
-			vec->data = reallocarray(vec->data, ++vec->capacity, sizeof(vec->data[0]));
-			if (!vec->data)
-				error(1, errno, "failed to store RTT");
-		}
-		else
-			vec->capacity *= 2;
-	}
-	vec->data[vec->size++] = rtt;
-	return;
 }
 
 void	receive_loop()
@@ -228,53 +211,17 @@ void	receive_loop()
 			add_rtt_to_vector(&g_state.rtt, rtt_ms);
 
 			g_state.received++;
-			printf("icmp_seq=%d, ttl=%d, time=%.03f ms\n", icmp->icmp_seq, ip->ip_ttl, rtt_ms);
+			printf("icmp_seq=%d, ttl=%d, time=%.03f ms", icmp->icmp_seq, ip->ip_ttl, rtt_ms);
 		}
-		else if (icmp->icmp_type == ICMP_DEST_UNREACH)
+		else
 		{
-			printf("Destination Host Unreachable\n");
+			const char *msg = get_ICMP_msg_string(icmp->icmp_type, icmp->icmp_code);
+			printf("%s", msg ? msg : "Unknown ICMP response");
 		}
-		else if (icmp->icmp_type == ICMP_TIME_EXCEEDED)
-		{
-			printf("Time to live exceeded\n");
-		}
+		printf("\n");
 		if (g_state.verbose /*&& icmp->icmp_type != ICMP_ECHOREPLY*/)
-		{
-			printf("IP Hdr Dump:\n");
-			printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src\tDst\tData\n");
-			// printf("ICMP: type %u, code %u, size %d",
-			// 	icmp->icmp_type, icmp->icmp_code, ntohs(ip->ip_len) - ip_hdr_len);
-			// if (icmp->icmp_type == ICMP_ECHO || icmp->icmp_type == ICMP_ECHOREPLY)
-			// 	printf(", id 0x%04x, seq 0x%04d", icmp->icmp_id, icmp->icmp_seq);
-			// printf("\n");
-		}
+			verbose_icmp_dump(icmp);
 	}
-}
-
-// Thank you RFC1071 for giving me the algorithm
-uint16_t	get_inet_checksum(void *addr, size_t count)
-{
-	/* Compute Internet Checksum for "count" bytes
-	*         beginning at location "addr".
-	*/
-	uint32_t	sum = 0;
-	uint16_t	*data = (uint16_t*)addr;
-
-	while( count > 1 )  {
-		/*  This is the inner loop */
-			sum += * data++;
-			count -= 2;
-	}
-
-		/*  Fold 32-bit sum to 16 bits */
-	while (sum>>16)
-		sum = (sum & 0xffff) + (sum >> 16);
-
-		/*  Add left-over byte, if any */
-	if( count > 0 )
-			sum += * (uint8_t *) data;
-
-	return ~sum;
 }
 
 void	send_ping(uint16_t sequence_num)
@@ -325,33 +272,94 @@ void	sigalrm_handler()
 
 void	finish_ping()
 {
-	// TODO: This is where ping stops
 	printf("--- %s ping statistics ---\n", g_state.ping_tgt_name);
 
 	float packet_loss = (float)g_state.received / g_state.sent;
 	packet_loss = 1.0f - (isnan(packet_loss) ? 0.0f : packet_loss);
-	printf("%u packets transmitted, %u received, %.0f%% packet loss\n",
+	printf("%u packets transmitted, %u packets received, %.0f%% packet loss\n",
 		g_state.sent, g_state.received, packet_loss * 100);
 
-	float min_rtt = +INFINITY;
-	float max_rtt = -INFINITY;
-	float avg_rtt = 0.0f;
-	for (size_t i = 0; i < g_state.rtt.size; ++i)
+	if (g_state.received > 0)
 	{
-		min_rtt = min_rtt > g_state.rtt.data[i] ? g_state.rtt.data[i] : min_rtt;
-		max_rtt = max_rtt < g_state.rtt.data[i] ? g_state.rtt.data[i] : max_rtt;
-		avg_rtt += g_state.rtt.data[i];
+		float min_rtt = +INFINITY;
+		float max_rtt = -INFINITY;
+		float avg_rtt = 0.0f;
+		for (size_t i = 0; i < g_state.rtt.size; ++i)
+		{
+			min_rtt = min_rtt > g_state.rtt.data[i] ? g_state.rtt.data[i] : min_rtt;
+			max_rtt = max_rtt < g_state.rtt.data[i] ? g_state.rtt.data[i] : max_rtt;
+			avg_rtt += g_state.rtt.data[i];
+		}
+		avg_rtt /= g_state.rtt.size;
+
+		float squared_differences = 0.0f;
+		for (size_t i = 0; i < g_state.rtt.size; ++i)
+			squared_differences += powf(g_state.rtt.data[i] - avg_rtt, 2);
+		float stddev = sqrtf(squared_differences / (g_state.rtt.size - 1));
+
+		printf("round-trip min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
+			min_rtt, avg_rtt, max_rtt, stddev);
 	}
-	avg_rtt /= g_state.rtt.size;
-
-	float squared_differences = 0.0f;
-	for (size_t i = 0; i < g_state.rtt.size; ++i)
-		squared_differences += powf(g_state.rtt.data[i] - avg_rtt, 2);
-	float stddev = sqrtf(squared_differences / (g_state.rtt.size - 1));
-
-	printf("round-trip min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
-		min_rtt, avg_rtt, max_rtt, stddev);
 	free(g_state.rtt.data);
 	close(g_state.sockfd);
 	exit(0);
+}
+
+void	verbose_icmp_dump(struct icmp *packet)
+{
+	// Check for all ICMP types that return original packet back into data segment
+	if (!(packet->icmp_type == ICMP_DEST_UNREACH
+		|| packet->icmp_type == ICMP_SOURCE_QUENCH
+		|| packet->icmp_type == ICMP_REDIRECT
+		|| packet->icmp_type == ICMP_TIME_EXCEEDED
+		|| packet->icmp_type == ICMP_PARAMETERPROB))
+	{
+		return;
+	}
+	struct ip *orig_ip = (struct ip*)packet->icmp_data;
+	uint ip_hdr_len = orig_ip->ip_hl * 4;
+
+	/*
+92 bytes from 192.168.190.72: Time to live exceeded
+IP Hdr Dump:
+ 4500 0054 f3e7 4000 0101 1d43 c0a8 f32c 8efb 25ae
+Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src      Dst     Data
+ 4  5  00 0054 f3e7   2 0000  01  01 1d43 192.168.243.44  142.251.37.174
+ICMP: type 8, code 0, size 64, id 0x7fec, seq 0x0000
+	*/
+
+	printf("IP Hdr Dump:\n ");
+	for (uint i = 0; i < sizeof(struct iphdr); ++i)
+		printf("%02x%s", *((unsigned char*)orig_ip + i), (i % 2 ? " " : ""));
+	printf("\n");
+	printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src\tDst\tData\n");
+	printf (" %1x  %1x  %02x %04x %04x   %1x %04x  %02x  %02x %04x",
+		orig_ip->ip_v,
+		orig_ip->ip_hl,
+		orig_ip->ip_tos,
+		// ip_len byte order not consistent, guess order based on coherent size
+		(orig_ip->ip_len > 0x2000) ? ntohs(orig_ip->ip_len) : orig_ip->ip_len,
+		ntohs(orig_ip->ip_id),
+		(ntohs(orig_ip->ip_off) & 0xe000) >> 13,
+		ntohs(orig_ip->ip_off) & 0x1fff,
+		orig_ip->ip_ttl,
+		orig_ip->ip_p,
+		ntohs(orig_ip->ip_sum)
+	);
+	printf (" %s ", inet_ntoa (*((struct in_addr *) &orig_ip->ip_src)));
+	printf (" %s ", inet_ntoa (*((struct in_addr *) &orig_ip->ip_dst)));
+	// Dump IP header options
+	for (uint i = 0; i < ip_hdr_len - sizeof(struct iphdr); ++i)
+		printf("%02x", *((char*)orig_ip + sizeof(struct iphdr) + i));
+	printf("\n");
+
+	struct icmp *orig_icmp = (struct icmp*)(packet->icmp_data + ip_hdr_len);
+	printf("ICMP: type %u, code %u, size %d, id 0x%04x, seq 0x%04d",
+		orig_icmp->icmp_type,
+		orig_icmp->icmp_code,
+		ntohs(orig_ip->ip_len) - ip_hdr_len,
+		orig_icmp->icmp_id,
+		orig_icmp->icmp_seq
+	);
+	printf("\n");
 }

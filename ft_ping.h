@@ -20,6 +20,14 @@ static inline bool	interesting_icmp(int type) {
 	);
 }
 
+// What we need to remember about sent/received packets
+struct packet_storage
+{
+	float		rtt;
+	uint16_t	seq;	// ICMP sequence number, detect duplicates
+	// char		sent_data[PACKET_LEN];	// Copy of packet we sent
+};
+
 struct ft_ping_state
 {
 	// Volatile just in case signals fuck this up
@@ -46,8 +54,12 @@ struct ft_ping_state
 
 extern struct ft_ping_state	g_state;
 
-void	sigalrm_handler();
-void	finish_ping();
-void	receive_loop();
+void		sigalrm_handler();
+void		finish_ping();
+void		receive_loop();
+void		add_rtt_to_vector(struct Vector *vec, float rtt);
+uint16_t	get_inet_checksum(void *addr, size_t count);
+const char	*get_ICMP_msg_string(uint16_t icmp_type, uint16_t icmp_code);
+void		verbose_icmp_dump(struct icmp *packet);
 
 #endif
