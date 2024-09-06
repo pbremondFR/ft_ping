@@ -156,13 +156,13 @@ int	main(int argc, char *const *argv)
 	char ip_str_buf[3 * 4 + 4];
 	inet_ntop(AF_INET, &g_state.ping_tgt_addr, ip_str_buf, sizeof(ip_str_buf));
 	printf("PING %s (%s): %ld data bytes, id %#06x = %d\n",
-		g_state.ping_tgt_name, ip_str_buf, PACKET_LEN - sizeof(struct icmphdr), g_state.pid, g_state.pid);
+		g_state.ping_tgt_name, ip_str_buf, PACKET_LEN - sizeof(struct icmphdr),
+		g_state.pid, g_state.pid);
 
 	sigalrm_handler();
 	// alarm(g_state.interval);
 
-	while (true)
-		;
+	receive_loop();
 }
 
 void	add_rtt_to_vector(struct Vector *vec, float rtt)
@@ -183,61 +183,6 @@ void	add_rtt_to_vector(struct Vector *vec, float rtt)
 	return;
 }
 
-void	receive_single(uint16_t sequence_num)
-{
-	char				hostname[256];
-	char				recv_buf[256];
-	char				ip_str[INET_ADDRSTRLEN] = {0};
-	struct sockaddr		recv_sockaddr = {};
-	socklen_t			recv_socklen = sizeof(recv_sockaddr);
-
-	ssize_t bytes_recved = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
-		&recv_sockaddr, &recv_socklen);
-	if (bytes_recved < 0)
-		error(3, errno, "recvfrom call failed");
-
-	struct ip *ip = (struct ip*)recv_buf;
-	if (ip->ip_p != IPPROTO_ICMP)
-		return;
-	// ip_hl: header length, number of 4-byte words in IP header.
-	struct icmp *icmp = (struct icmp*)(recv_buf + (ip->ip_hl * 4));
-
-	if (!interesting_icmp(icmp->icmp_type))
-		return;
-
-	int gai_err;
-	if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
-		error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
-
-	printf("%zu bytes from %s: ", bytes_recved - (ip->ip_hl * 4), hostname);
-
-	if (icmp->icmp_type == ICMP_ECHOREPLY)
-	{
-		if (icmp->icmp_id != (uint16_t)g_state.pid)
-			return;
-
-		struct timeval now = {}, delta = {};
-		struct timeval *sent_time = (struct timeval*)icmp->icmp_data;
-		gettimeofday(&now, NULL);
-		timersub(&now, sent_time, &delta);
-		float rtt_ms = ((float)delta.tv_sec * 1000.0f) + ((float)delta.tv_usec / 1000.0f);
-
-		add_rtt_to_vector(&g_state.rtt, rtt_ms);
-
-		if (icmp->icmp_seq != sequence_num)
-			printf("FUCKED UP ICMP SEQUENCE\n");
-
-		g_state.received++;
-		printf("icmp_seq=%d, ttl=%d, time=%.03f ms\n", icmp->icmp_seq, ip->ip_ttl, rtt_ms);
-	}
-	else
-	{
-		printf("Infotype? %s, type %d\n", ICMP_INFOTYPE(icmp->icmp_type) ? "YES" : "no", icmp->icmp_type);
-		// printf("IP Hdr Dump:\n");
-		// printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src      Dst     Data\n");
-	}
-}
-
 void	receive_loop()
 {
 	char				hostname[256];
@@ -246,39 +191,62 @@ void	receive_loop()
 	struct sockaddr		recv_sockaddr = {};
 	socklen_t			recv_socklen = sizeof(recv_sockaddr);
 
-	while (true)
+	while(true)
 	{
-		ssize_t received = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
+		ssize_t bytes_recved = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
 			&recv_sockaddr, &recv_socklen);
-		if (received < 0)
+		if (bytes_recved < 0)
 			error(3, errno, "recvfrom call failed");
 
 		struct ip *ip = (struct ip*)recv_buf;
 		if (ip->ip_p != IPPROTO_ICMP)
-			continue;
+			return;
 		// ip_hl: header length, number of 4-byte words in IP header.
-		struct icmp *icmp = (struct icmp*)(recv_buf + (ip->ip_hl * 4));
-		printf("Infotype? %s, type %d\n", ICMP_INFOTYPE(icmp->icmp_type) ? "YES" : "no", icmp->icmp_type);
+		uint16_t ip_hdr_len = (ip->ip_hl * 4);
+		struct icmp *icmp = (struct icmp*)(recv_buf + ip_hdr_len);
 
-		if (icmp->icmp_id != (uint16_t)g_state.pid) {
-			printf("fucked up PID: %d, mine is %d, getpid() is %d\n", icmp->icmp_id, g_state.pid, getpid());
-			continue;
-		}
+		if (!interesting_icmp(icmp->icmp_type))
+			return;
+
+		int gai_err;
+		if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
+			error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
+
+		printf("%zu bytes from %s: ", bytes_recved - ip_hdr_len, hostname);
 
 		if (icmp->icmp_type == ICMP_ECHOREPLY)
 		{
-			int gai_err;
-			if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
-				error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
+			if (icmp->icmp_id != (uint16_t)g_state.pid)
+				return;
+
+			struct timeval now = {}, delta = {};
+			struct timeval *sent_time = (struct timeval*)icmp->icmp_data;
+			gettimeofday(&now, NULL);
+			timersub(&now, sent_time, &delta);
+			float rtt_ms = ((float)delta.tv_sec * 1000.0f) + ((float)delta.tv_usec / 1000.0f);
+
+			add_rtt_to_vector(&g_state.rtt, rtt_ms);
 
 			g_state.received++;
-			printf("%zu bytes from %s: icmp_seq=%d, ttl=%d, time=%.03f ms\n",
-				received - (ip->ip_hl * 4), hostname, icmp->icmp_seq, ip->ip_ttl, 0.0f);
+			printf("icmp_seq=%d, ttl=%d, time=%.03f ms\n", icmp->icmp_seq, ip->ip_ttl, rtt_ms);
 		}
-		else
+		else if (icmp->icmp_type == ICMP_DEST_UNREACH)
+		{
+			printf("Destination Host Unreachable\n");
+		}
+		else if (icmp->icmp_type == ICMP_TIME_EXCEEDED)
+		{
+			printf("Time to live exceeded\n");
+		}
+		if (g_state.verbose /*&& icmp->icmp_type != ICMP_ECHOREPLY*/)
 		{
 			printf("IP Hdr Dump:\n");
-			printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src      Dst     Data\n");
+			printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src\tDst\tData\n");
+			// printf("ICMP: type %u, code %u, size %d",
+			// 	icmp->icmp_type, icmp->icmp_code, ntohs(ip->ip_len) - ip_hdr_len);
+			// if (icmp->icmp_type == ICMP_ECHO || icmp->icmp_type == ICMP_ECHOREPLY)
+			// 	printf(", id 0x%04x, seq 0x%04d", icmp->icmp_id, icmp->icmp_seq);
+			// printf("\n");
 		}
 	}
 }
@@ -347,7 +315,7 @@ void	sigalrm_handler()
 		send_ping(seq);
 		alarm(g_state.interval);
 		// g_state.num_to_send--;
-		receive_single(seq);
+		// receive_single(seq);
 	}
 	else if (g_state.num_to_send <= 0)
 	{
