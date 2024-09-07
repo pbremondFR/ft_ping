@@ -54,6 +54,7 @@ struct ft_ping_state
 
 extern struct ft_ping_state	g_state;
 
+void		parse_options(int argc, char *const *argv);
 void		sigalrm_handler();
 void		finish_ping();
 void		receive_loop();

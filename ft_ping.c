@@ -33,73 +33,13 @@ struct ft_ping_state	g_state = {
 	},
 };
 
-static long parse_numerical_flag(char *arg)
-{
-	char *endptr = NULL;
-	if (!arg)
-		return LONG_MIN;
-	long res = strtol(arg, &endptr, 10);
-	if (!endptr || *endptr != 0)
-		return LONG_MIN;
-	else
-		return res;
-}
-
-static void	parse_options(int argc, char *const *argv)
-{
-	int	opt = 0;
-
-	while ((opt = getopt(argc, argv, "vt:c:i:")) != -1)
-	{
-		switch (opt)
-		{
-		case 'v':
-			g_state.verbose = true;
-			break;
-		case 't':
-		{
-			long ttl = parse_numerical_flag(optarg);
-			if (ttl <= 0 || ttl > UINT32_MAX)
-				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= 255", ttl);
-			g_state.ttl = (uint32_t)ttl;
-			break;
-		}
-		case 'c':
-		{
-			long count = parse_numerical_flag(optarg);
-			if (count <= 0 || count >= SIG_ATOMIC_MAX)
-				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= %d", count, SIG_ATOMIC_MAX);
-			g_state.num_to_send = (sig_atomic_t)count;
-			break;
-		}
-		case 'i':
-		{
-			long interval = parse_numerical_flag(optarg);
-			if (interval <= 0 || interval >= SIG_ATOMIC_MAX)
-				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= %d", interval, UINT_MAX);
-			g_state.interval = (unsigned int)interval;
-			break;
-		}
-		case '?':
-			exit(1);
-			break;
-		default:
-			error(1, 0, "unknown option");
-			break;
-		}
-	}
-
-}
-
 int	main(int argc, char *const *argv)
 {
 	parse_options(argc, argv);
 	printf("num to send: %d, ttl: %d, verbose: %d, interval: %d\n", g_state.num_to_send, g_state.ttl, g_state.verbose, g_state.interval);
 
 	if (optind == argc)
-	{
-		error(1, 0, "missing argument");
-	}
+		error(1, 0, "missing host operand");
 
 	struct addrinfo hints = {};
 	struct addrinfo *tgtinfo;
@@ -305,18 +245,18 @@ void	finish_ping()
 	exit(0);
 }
 
-void	verbose_icmp_dump(struct icmp *packet)
+void	verbose_icmp_dump(struct icmp *recved_packet)
 {
 	// Check for all ICMP types that return original packet back into data segment
-	if (!(packet->icmp_type == ICMP_DEST_UNREACH
-		|| packet->icmp_type == ICMP_SOURCE_QUENCH
-		|| packet->icmp_type == ICMP_REDIRECT
-		|| packet->icmp_type == ICMP_TIME_EXCEEDED
-		|| packet->icmp_type == ICMP_PARAMETERPROB))
+	if (!(recved_packet->icmp_type == ICMP_DEST_UNREACH
+		|| recved_packet->icmp_type == ICMP_SOURCE_QUENCH
+		|| recved_packet->icmp_type == ICMP_REDIRECT
+		|| recved_packet->icmp_type == ICMP_TIME_EXCEEDED
+		|| recved_packet->icmp_type == ICMP_PARAMETERPROB))
 	{
 		return;
 	}
-	struct ip *orig_ip = (struct ip*)packet->icmp_data;
+	struct ip *orig_ip = (struct ip*)recved_packet->icmp_data;
 	uint ip_hdr_len = orig_ip->ip_hl * 4;
 
 	printf("IP Hdr Dump:\n ");
@@ -349,7 +289,7 @@ void	verbose_icmp_dump(struct icmp *packet)
 		printf("%02x", *((char*)orig_ip + sizeof(struct iphdr) + i));
 	printf("\n");
 
-	struct icmp *orig_icmp = (struct icmp*)(packet->icmp_data + ip_hdr_len);
+	struct icmp *orig_icmp = (struct icmp*)(recved_packet->icmp_data + ip_hdr_len);
 	printf("ICMP: type %u, code %u, size %d, id 0x%04x, seq 0x%04d",
 		orig_icmp->icmp_type,
 		orig_icmp->icmp_code,
