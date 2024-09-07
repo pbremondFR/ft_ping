@@ -1,4 +1,13 @@
-static const char usage_str[] = R"(
+#include "ft_ping.h"
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <limits.h>
+#include <stdbool.h>
+#include <error.h>
+#include <getopt.h>
+
+static const char help_str[] = R"(
 Usage: ping [OPTION...] HOST ...
 Send ICMP ECHO_REQUEST packets to network hosts.
 
@@ -17,14 +26,6 @@ Send ICMP ECHO_REQUEST packets to network hosts.
 Report bugs to NOBODY I DON'T CARE.
 )";
 
-#include "ft_ping.h"
-
-#include <stdlib.h>
-#include <stdio.h>
-#include <limits.h>
-#include <stdbool.h>
-#include <error.h>
-
 static long parse_numerical_flag(char *arg)
 {
 	char *endptr = NULL;
@@ -37,18 +38,28 @@ static long parse_numerical_flag(char *arg)
 		return res;
 }
 
+static struct option	long_options[] = {
+	{.name = "count",		.has_arg = true,	.flag = NULL,	.val = 'c'},
+	{.name = "interval",	.has_arg = true,	.flag = NULL,	.val = 'i'},
+	{.name = "numeric",		.has_arg = false,	.flag = NULL,	.val = 'n'},
+	{.name = "ttl",			.has_arg = true,	.flag = NULL,	.val = 1},
+	{.name = "tos",			.has_arg = true,	.flag = NULL,	.val = 'T'},
+	{.name = "verbose",		.has_arg = false,	.flag = NULL,	.val = 'v'},
+	{.name = "timeout",		.has_arg = true,	.flag = NULL,	.val = 'w'},
+	{.name = "help",		.has_arg = false,	.flag = NULL,	.val = '?'},
+	{0, 0, 0, 0}	// null terminate LMAO
+};
+
 void	parse_options(int argc, char *const *argv)
 {
 	int	opt = 0;
 
-	while ((opt = getopt(argc, argv, "vt:c:i:")) != -1)
+	int	longopt_idx = 0;
+	while ((opt = getopt_long(argc, argv, "c:i:nT:vw:", long_options, &longopt_idx)) != -1)
 	{
 		switch (opt)
 		{
-		case 'v':
-			g_state.verbose = true;
-			break;
-		case 't':
+		case 1:	// TTL has no single char flag option
 		{
 			long ttl = parse_numerical_flag(optarg);
 			if (ttl <= 0 || ttl > UINT32_MAX)
@@ -72,23 +83,38 @@ void	parse_options(int argc, char *const *argv)
 			g_state.interval = (unsigned int)interval;
 			break;
 		}
+		case 'n':
+		{
+			g_state.numeric = true;
+			break;
+		}
+		case 'T':
+		{
+			long tos = parse_numerical_flag(optarg);
+			if (tos < 0 || tos > UINT8_MAX)
+				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= 255", tos);
+			g_state.tos = tos;
+			break;
+		}
+		case 'v':
+			g_state.verbose = true;
+			break;
 		case '?':
-        {
-            switch (optopt)
-            {
-
-            case '?':
-                puts(usage_str);
-                exit(0);
-            default:
-                puts("Try ping --help or ping --usage for more information");
-                exit(64);
-            }
-        }
+		{
+			switch (optopt)
+			{
+			case 0:	// optopt not set by --help
+			case '?':
+				puts(help_str);
+				exit(0);
+			default:
+				puts("Try ping --help or ping --usage for more information");
+				exit(64);
+			}
+		}
 			exit(1);
 			break;
 		default:
-            puts(usage_str);
 			error(1, 0, "unknown option");
 			break;
 		}
