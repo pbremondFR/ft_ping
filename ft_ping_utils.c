@@ -33,54 +33,62 @@ uint16_t	get_inet_checksum(void *addr, size_t count)
 const char	*get_ICMP_msg_string(uint16_t icmp_type, uint16_t icmp_code)
 {
 	typedef struct {
+		uint16_t	type;
 		uint16_t	code;
-		const char	*str;
-	} t_map;
+	}	type_code_pair;
 
-	t_map	dest_unreach_strings[] = {
-		{ICMP_HOST_UNREACH,		"Destination Host Unreachable"},
-		{ICMP_PROT_UNREACH,		"Destination Protocol Unreachable"},
-		{ICMP_PORT_UNREACH,		"Destination Port Unreachable"},
-		{ICMP_FRAG_NEEDED,		"Fragmentation needed and DF set"},
-		{ICMP_SR_FAILED,		"Source Route Failed"},
-		{ICMP_NET_UNKNOWN,		"Network Unknown"},
-		{ICMP_HOST_UNKNOWN,		"Host Unknown"},
-		{ICMP_HOST_ISOLATED,	"Host Isolated"},
-		{ICMP_NET_UNR_TOS,		"Destination Network Unreachable At This TOS"},
-		{ICMP_HOST_UNR_TOS,		"Destination Host Unreachable At This TOS"},
-		{ICMP_PKT_FILTERED,		"Packet Filtered"},
-		{ICMP_PREC_VIOLATION,	"Precedence Violation"},
-		{ICMP_PREC_CUTOFF,		"Precedence Cutoff"},
+	const uint16_t icmp_code_wildcard = UINT16_MAX;
+
+	static const struct {type_code_pair key; const char* value;}	strings[] = {
+		/* Destination Unreachable (code 3) */
+		{{ICMP_DEST_UNREACH, ICMP_HOST_UNREACH},	"Destination Host Unreachable"},
+		{{ICMP_DEST_UNREACH, ICMP_PROT_UNREACH},	"Destination Protocol Unreachable"},
+		{{ICMP_DEST_UNREACH, ICMP_PORT_UNREACH},	"Destination Port Unreachable"},
+		{{ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED},		"Fragmentation needed and DF set"},
+		{{ICMP_DEST_UNREACH, ICMP_SR_FAILED},		"Source Route Failed"},
+		{{ICMP_DEST_UNREACH, ICMP_NET_UNKNOWN},		"Network Unknown"},
+		{{ICMP_DEST_UNREACH, ICMP_HOST_UNKNOWN},	"Host Unknown"},
+		{{ICMP_DEST_UNREACH, ICMP_HOST_ISOLATED},	"Host Isolated"},
+		{{ICMP_DEST_UNREACH, ICMP_NET_UNR_TOS},		"Destination Network Unreachable At This TOS"},
+		{{ICMP_DEST_UNREACH, ICMP_HOST_UNR_TOS},	"Destination Host Unreachable At This TOS"},
+		{{ICMP_DEST_UNREACH, ICMP_PKT_FILTERED},	"Packet Filtered"},
+		{{ICMP_DEST_UNREACH, ICMP_PREC_VIOLATION},	"Precedence Violation"},
+		{{ICMP_DEST_UNREACH, ICMP_PREC_CUTOFF},		"Precedence Cutoff"},
+		/* Source Quench (code 4): DEPRECATED */
+		{{ICMP_SOURCE_QUENCH, icmp_code_wildcard},	"Source Quench"},
+		/* Redirect (change route) (code 5) */
+		{{ICMP_REDIRECT, ICMP_REDIR_NET},		"Redirect Network"},
+		{{ICMP_REDIRECT, ICMP_REDIR_HOST},		"Redirect Host"},
+		{{ICMP_REDIRECT, ICMP_REDIR_NETTOS},	"Redirect Type of Service and Network"},
+		{{ICMP_REDIRECT, ICMP_REDIR_HOSTTOS},	"Redirect Type of Service and Host"},
+		/* Time Exceeded (code 11) */
+		{{ICMP_TIME_EXCEEDED, ICMP_EXC_TTL},		"Time to live exceeded"},
+		{{ICMP_TIME_EXCEEDED, ICMP_EXC_FRAGTIME},	"Frag reassembly time exceeded"},
+		/* Parameter Problem (code 12) */
+		{{ICMP_PARAMETERPROB, icmp_code_wildcard},	"Parameter Problem"},
+		/* Timestamp Request/Reply (codes 13/14) */
+		{{ICMP_TIMESTAMP,		icmp_code_wildcard},	"Timestamp Request"},
+		{{ICMP_TIMESTAMPREPLY,	icmp_code_wildcard},	"Timestamp Reply"},
+		/* Information Request/Reply (codes 15/16): DEPRECATED */
+		{{ICMP_INFO_REQUEST,	icmp_code_wildcard},	"Information Request"},
+		{{ICMP_INFO_REPLY,		icmp_code_wildcard},	"Information Reply"},
+		/* Address Mask Request/Reply (codes 17/18): DEPRECATED */
+		{{ICMP_ADDRESS,			icmp_code_wildcard},	"Address Mask Request"},
+		{{ICMP_ADDRESSREPLY,	icmp_code_wildcard},	"Address Mask Reply"},
 	};
 
-	t_map	redirect_strings[] = {
-		{ICMP_REDIR_NET,		"Redirect Network"},
-		{ICMP_REDIR_HOST,		"Redirect Host"},
-		{ICMP_REDIR_NETTOS,		"Redirect Type of Service and Network"},
-		{ICMP_REDIR_HOSTTOS,	"Redirect Type of Service and Host"},
-	};
-
-	t_map	time_exceeded_strings[] = {
-		{ICMP_EXC_TTL,		"Time to live exceeded"},
-		{ICMP_EXC_FRAGTIME,	"Frag reassembly time exceeded"}
-	};
-
-	t_map	*icmp_msg = NULL;
-	int		map_sz = 0;
-	if (icmp_type == ICMP_DEST_UNREACH) {
-		icmp_msg = dest_unreach_strings;
-		map_sz = sizeof(dest_unreach_strings) / sizeof(t_map);
-	} else if (icmp_type == ICMP_REDIRECT) {
-		icmp_msg = redirect_strings;
-		map_sz = sizeof(redirect_strings) / sizeof(t_map);
-	} else if (icmp_type == ICMP_TIME_EXCEEDED) {
-		icmp_msg = time_exceeded_strings;
-		map_sz = sizeof(time_exceeded_strings) / sizeof(t_map);
-	}
-	for (; icmp_msg && icmp_msg < icmp_msg + map_sz; ++icmp_msg)
-		if (icmp_msg->code == icmp_code)
+	type_code_pair to_find = {icmp_type, icmp_code};
+	const char *msg = NULL;
+	for (size_t i = 0; i < FTPING_ARRAY_SZ(strings); ++i)
+	{
+		if (to_find.type == strings[i].key.type
+			&& (to_find.code == strings[i].key.code || strings[i].key.code == icmp_code_wildcard))
+		{
+			msg = strings[i].value;
 			break;
-	return icmp_msg ? icmp_msg->str : NULL;
+		}
+	}
+	return msg;
 }
 
 void	add_rtt_to_vector(struct Vector *vec, float rtt)

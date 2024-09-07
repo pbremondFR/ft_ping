@@ -319,35 +319,31 @@ void	verbose_icmp_dump(struct icmp *packet)
 	struct ip *orig_ip = (struct ip*)packet->icmp_data;
 	uint ip_hdr_len = orig_ip->ip_hl * 4;
 
-	/*
-92 bytes from 192.168.190.72: Time to live exceeded
-IP Hdr Dump:
- 4500 0054 f3e7 4000 0101 1d43 c0a8 f32c 8efb 25ae
-Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src      Dst     Data
- 4  5  00 0054 f3e7   2 0000  01  01 1d43 192.168.243.44  142.251.37.174
-ICMP: type 8, code 0, size 64, id 0x7fec, seq 0x0000
-	*/
-
 	printf("IP Hdr Dump:\n ");
 	for (uint i = 0; i < sizeof(struct iphdr); ++i)
-		printf("%02x%s", *((unsigned char*)orig_ip + i), (i % 2 ? " " : ""));
+		printf("%02x%s", *((char*)orig_ip + i), (i % 2 ? " " : ""));
 	printf("\n");
 	printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src\tDst\tData\n");
 	printf (" %1x  %1x  %02x %04x %04x   %1x %04x  %02x  %02x %04x",
 		orig_ip->ip_v,
-		orig_ip->ip_hl,
-		orig_ip->ip_tos,
-		// ip_len byte order not consistent, guess order based on coherent size
-		(orig_ip->ip_len > 0x2000) ? ntohs(orig_ip->ip_len) : orig_ip->ip_len,
+		orig_ip->ip_hl,		// Version + IHL == 8 bits, no byte order swap
+		orig_ip->ip_tos,	// TOS is 8 bits, no byte order swap
+		ntohs(orig_ip->ip_len),
 		ntohs(orig_ip->ip_id),
-		(ntohs(orig_ip->ip_off) & 0xe000) >> 13,
-		ntohs(orig_ip->ip_off) & 0x1fff,
-		orig_ip->ip_ttl,
-		orig_ip->ip_p,
+		// Flags are the 3 most signficant bits of 'IP offset' field
+		(ntohs(orig_ip->ip_off) & ~IP_OFFMASK) >> 13,
+		ntohs(orig_ip->ip_off) & IP_OFFMASK,
+		orig_ip->ip_ttl,	// 8 bits, no byte order swap
+		orig_ip->ip_p,		// 8 bits, no byte order swap
 		ntohs(orig_ip->ip_sum)
 	);
-	printf (" %s ", inet_ntoa (*((struct in_addr *) &orig_ip->ip_src)));
-	printf (" %s ", inet_ntoa (*((struct in_addr *) &orig_ip->ip_dst)));
+
+	char	src_ip_str[INET_ADDRSTRLEN] = {0};
+	char	dst_ip_str[INET_ADDRSTRLEN] = {0};
+	inet_ntop(AF_INET, &orig_ip->ip_src, src_ip_str, sizeof(src_ip_str));
+	inet_ntop(AF_INET, &orig_ip->ip_dst, dst_ip_str, sizeof(dst_ip_str));
+	printf(" %s  %s ", src_ip_str, dst_ip_str);
+
 	// Dump IP header options
 	for (uint i = 0; i < ip_hdr_len - sizeof(struct iphdr); ++i)
 		printf("%02x", *((char*)orig_ip + sizeof(struct iphdr) + i));
@@ -357,6 +353,7 @@ ICMP: type 8, code 0, size 64, id 0x7fec, seq 0x0000
 	printf("ICMP: type %u, code %u, size %d, id 0x%04x, seq 0x%04d",
 		orig_icmp->icmp_type,
 		orig_icmp->icmp_code,
+		// Only convert IP byte order, ICMP is a copy of our own sent packet.
 		ntohs(orig_ip->ip_len) - ip_hdr_len,
 		orig_icmp->icmp_id,
 		orig_icmp->icmp_seq

@@ -11,6 +11,7 @@
 # include <sys/time.h>
 
 #define PACKET_LEN	(sizeof(struct icmphdr) + sizeof(struct timeval) + 40)
+#define FTPING_ARRAY_SZ(a)	(sizeof(a) / sizeof(*a))
 
 static inline bool	interesting_icmp(int type) {
 	// TODO: Include more of these?
@@ -23,9 +24,8 @@ static inline bool	interesting_icmp(int type) {
 // What we need to remember about sent/received packets
 struct packet_storage
 {
-	float		rtt;
-	uint16_t	seq;	// ICMP sequence number, detect duplicates
-	// char		sent_data[PACKET_LEN];	// Copy of packet we sent
+	float	rtt;
+	bool	received;	// Is used to detect duplicates
 };
 
 struct ft_ping_state
