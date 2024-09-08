@@ -72,13 +72,13 @@ int	main(int argc, char *const *argv)
 		}
 	}
 	else
-		error(2, 0, "unknown host: %s", gai_strerror(result));
+		error(1, 0, "unknown host: %s", gai_strerror(result));
 
 	struct sockaddr_in *ipv4 = (struct sockaddr_in*)tgtinfo->ai_addr;
 
 	g_state.sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	if (g_state.sockfd == -1)
-		error(2, errno, "failed to create socket");
+		error(1, errno, "failed to create socket");
 	if (setsockopt(g_state.sockfd, SOL_IP, IP_TTL, &g_state.ttl, sizeof(g_state.ttl)) != 0)
 		error(1, errno, "setsockopt IP_TTL");
 	if (setsockopt(g_state.sockfd, SOL_IP, IP_TOS, &g_state.tos, sizeof(g_state.tos)) != 0)
@@ -124,7 +124,7 @@ void	receive_loop()
 		ssize_t bytes_recved = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
 			&recv_sockaddr, &recv_socklen);
 		if (bytes_recved < 0)
-			error(3, errno, "recvfrom call failed");
+			error(1, errno, "recvfrom call failed");
 
 		struct ip *ip = (struct ip*)recv_buf;
 		if (ip->ip_p != IPPROTO_ICMP)
@@ -135,7 +135,7 @@ void	receive_loop()
 
 		int gai_err;
 		if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
-			error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
+			error(1, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
 
 		// Packet too short to contain ICMP header
 		if (bytes_recved - ip_hdr_len < sizeof(struct icmphdr))
