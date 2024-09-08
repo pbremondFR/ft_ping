@@ -48,6 +48,7 @@ struct ft_ping_state
 	struct in_addr	ping_tgt_addr;
 	volatile uint	sent;
 	unsigned int	received;
+	struct timeval	started_at;
 
 	struct PacketStorageVector	packets;
 };

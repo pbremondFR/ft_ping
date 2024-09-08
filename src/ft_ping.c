@@ -31,6 +31,7 @@ struct ft_ping_state	g_state = {
 	.ping_tgt_addr = {},
 	.sent = 0,
 	.received = 0,
+	.started_at = {},
 	.packets = {
 		.data = NULL,
 		.capacity = 0,
@@ -106,6 +107,7 @@ int	main(int argc, char *const *argv)
 	if (g_state.verbose)
 		printf(", id 0x%04x = %d", g_state.pid, g_state.pid);
 	printf("\n");
+	gettimeofday(&g_state.started_at, NULL);
 	sigalrm_handler();
 
 	receive_loop();
@@ -113,8 +115,8 @@ int	main(int argc, char *const *argv)
 
 void	receive_loop()
 {
-	char				hostname[256];
-	char				recv_buf[256];
+	char				hostname[256] = {};
+	char				recv_buf[256] = {};
 	struct sockaddr		recv_sockaddr = {};
 	socklen_t			recv_socklen = sizeof(recv_sockaddr);
 
@@ -213,11 +215,18 @@ void	sigalrm_handler()
 	// So atomic_fetch_sub(&g_state.num_to_send, -1) doesn't work
 	if (g_state.num_to_send == -1 || g_state.num_to_send-- > 0)
 	{
+		// Finish ping after N seconds if enabled
+		if (g_state.timeout != -1)
+		{
+			struct timeval now, elapsed;
+			gettimeofday(&now, NULL);
+			timersub(&now, &g_state.started_at, &elapsed);
+			if (elapsed.tv_sec >= g_state.timeout)
+				finish_ping();
+		}
 		uint16_t seq = g_state.sent++;
 		send_ping(seq);
 		alarm(g_state.interval);
-		// g_state.num_to_send--;
-		// receive_single(seq);
 	}
 	else if (g_state.num_to_send <= 0)
 	{
@@ -244,7 +253,7 @@ void	finish_ping()
 		for (size_t i = 0; i < g_state.packets.capacity; ++i)
 		{
 			struct packet_storage *p = &g_state.packets.data[i];
-			if (!p->received)
+			if (!p->received)	// Skip over unreceived packets, if any.
 				continue;
 			++num_packets;
 			min_rtt = min_rtt > p->rtt ? p->rtt : min_rtt;
@@ -256,7 +265,7 @@ void	finish_ping()
 		float squared_differences = 0.0f;
 		for (size_t i = 0; i < g_state.packets.capacity; ++i)
 		{
-			if (!g_state.packets.data[i].received)
+			if (!g_state.packets.data[i].received)	// Skip over unreceived packets, if any.
 				continue;
 			squared_differences += powf(g_state.packets.data[i].rtt - avg_rtt, 2);
 		}
