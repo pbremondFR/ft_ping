@@ -136,12 +136,15 @@ void	receive_loop()
 		uint16_t ip_hdr_len = (ip->ip_hl * 4);
 		struct icmp *icmp = (struct icmp*)(recv_buf + ip_hdr_len);
 
-		if (!interesting_icmp(icmp->icmp_type))
-			return;
-
 		int gai_err;
 		if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
 			error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
+
+		uint16_t cksum = icmp->icmp_cksum;
+		icmp->icmp_cksum = 0;
+		if (cksum != get_inet_checksum(icmp, ntohs(ip->ip_len) - ip_hdr_len))
+			fprintf(stderr, "checksum mismatch from %s\n", hostname);
+		icmp->icmp_cksum = cksum;	// Restore it just in case we use it later for some reason
 
 		printf("%zu bytes from %s: ", bytes_recved - ip_hdr_len, hostname);
 
@@ -167,7 +170,7 @@ void	receive_loop()
 			printf("%s", msg ? msg : "Unknown ICMP response");
 		}
 		printf("\n");
-		if (g_state.verbose /*&& icmp->icmp_type != ICMP_ECHOREPLY*/)
+		if (g_state.verbose && icmp->icmp_type != ICMP_ECHOREPLY)
 			verbose_icmp_dump(icmp);
 	}
 }

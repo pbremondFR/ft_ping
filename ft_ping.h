@@ -13,14 +13,6 @@
 #define PACKET_LEN	(sizeof(struct icmphdr) + sizeof(struct timeval) + 40)
 #define FTPING_ARRAY_SZ(a)	(sizeof(a) / sizeof(*a))
 
-static inline bool	interesting_icmp(int type) {
-	// TODO: Include more of these?
-	return (type == ICMP_ECHOREPLY
-		|| type == ICMP_DEST_UNREACH	// "Destination Host Unreachable"
-		|| type == ICMP_TIME_EXCEEDED	// "Time to live exceeded"
-	);
-}
-
 // What we need to remember about sent/received packets
 struct packet_storage
 {
