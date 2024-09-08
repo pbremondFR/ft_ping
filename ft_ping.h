@@ -35,8 +35,9 @@ struct ft_ping_state
 	bool			verbose;
 	bool			numeric;	// TODO: Don't resolve host address?
 	uint32_t		ttl;
-	uint32_t		tos;		// TODO
+	uint32_t		tos;
 	unsigned int	interval;
+	int				timeout;
 
 	int				sockfd;
 	struct sockaddr	sockaddr;

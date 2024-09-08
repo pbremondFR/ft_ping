@@ -17,10 +17,15 @@
 struct ft_ping_state	g_state = {
 	.num_to_send = -1,
 	.verbose = false,
+	.numeric = false,
 	.ttl = 112,
+	.tos = 0,
 	.interval = 1,
+	.timeout = -1,
+
 	.sockfd = 0,
 	.sockaddr = {},
+
 	.pid = 0,
 	.ping_tgt_name = NULL,
 	.ping_tgt_addr = {},
@@ -75,7 +80,10 @@ int	main(int argc, char *const *argv)
 	g_state.sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	if (g_state.sockfd == -1)
 		error(2, errno, "failed to create socket");
-	setsockopt(g_state.sockfd, SOL_IP, IP_TTL, &g_state.ttl, sizeof(g_state.ttl));
+	if (setsockopt(g_state.sockfd, SOL_IP, IP_TTL, &g_state.ttl, sizeof(g_state.ttl)) != 0)
+		error(1, errno, "setsockopt IP_TTL");
+	if (setsockopt(g_state.sockfd, SOL_IP, IP_TOS, &g_state.tos, sizeof(g_state.tos)) != 0)
+		error(1, errno, "setsockopt IP_TOS");
 
 	g_state.pid = getpid();
 	g_state.sockaddr = *(struct sockaddr*)ipv4;

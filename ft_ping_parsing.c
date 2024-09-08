@@ -7,24 +7,25 @@
 #include <error.h>
 #include <getopt.h>
 
-static const char help_str[] = R"(
-Usage: ping [OPTION...] HOST ...
-Send ICMP ECHO_REQUEST packets to network hosts.
+#define TTL_OPTION_FLAG	1
 
- Options valid for all request types:
-
-  -c, --count=NUMBER         stop after sending NUMBER packets
-  -i, --interval=NUMBER      wait NUMBER seconds between sending each packet
-  -n, --numeric              do not resolve host addresses
-      --ttl=N                specify N as time-to-live
-  -T, --tos=NUM              set type of service (TOS) to NUM
-  -v, --verbose              verbose output
-  -w, --timeout=N            stop after N seconds
-
-  -?, --help                 give this help list
-
-Report bugs to NOBODY I DON'T CARE.
-)";
+static const char help_str[] = "Usage: ping [OPTION...] HOST ...\n\
+Send ICMP ECHO_REQUEST packets to network hosts.\n\
+\n\
+ Options valid for all request types:\n\
+\n\
+  -c, --count=NUMBER         stop after sending NUMBER packets\n\
+  -i, --interval=NUMBER      wait NUMBER seconds between sending each packet\n\
+  -n, --numeric              do not resolve host addresses\n\
+      --ttl=N                specify N as time-to-live\n\
+  -T, --tos=NUM              set type of service (TOS) to NUM\n\
+  -v, --verbose              verbose output\n\
+  -w, --timeout=N            stop after N seconds\n\
+\n\
+  -?, --help                 give this help list\n\
+\n\
+Report bugs to NOBODY I DON'T CARE.\
+";
 
 static long parse_numerical_flag(char *arg)
 {
@@ -42,7 +43,7 @@ static struct option	long_options[] = {
 	{.name = "count",		.has_arg = true,	.flag = NULL,	.val = 'c'},
 	{.name = "interval",	.has_arg = true,	.flag = NULL,	.val = 'i'},
 	{.name = "numeric",		.has_arg = false,	.flag = NULL,	.val = 'n'},
-	{.name = "ttl",			.has_arg = true,	.flag = NULL,	.val = 1},
+	{.name = "ttl",			.has_arg = true,	.flag = NULL,	.val = TTL_OPTION_FLAG},
 	{.name = "tos",			.has_arg = true,	.flag = NULL,	.val = 'T'},
 	{.name = "verbose",		.has_arg = false,	.flag = NULL,	.val = 'v'},
 	{.name = "timeout",		.has_arg = true,	.flag = NULL,	.val = 'w'},
@@ -59,7 +60,7 @@ void	parse_options(int argc, char *const *argv)
 	{
 		switch (opt)
 		{
-		case 1:	// TTL has no single char flag option
+		case TTL_OPTION_FLAG:	// TTL has no single char flag option
 		{
 			long ttl = parse_numerical_flag(optarg);
 			if (ttl <= 0 || ttl > UINT32_MAX)
@@ -99,6 +100,14 @@ void	parse_options(int argc, char *const *argv)
 		case 'v':
 			g_state.verbose = true;
 			break;
+		case 'w':
+		{
+			long timeout = parse_numerical_flag(optarg);
+			if (timeout < 1 || timeout >= INT_MAX)
+				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= %d", timeout, INT_MAX);
+			g_state.timeout = timeout;
+			break;
+		}
 		case '?':
 		{
 			switch (optopt)
