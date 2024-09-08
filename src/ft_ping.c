@@ -115,7 +115,6 @@ void	receive_loop()
 {
 	char				hostname[256];
 	char				recv_buf[256];
-	char				ip_str[INET_ADDRSTRLEN] = {0};
 	struct sockaddr		recv_sockaddr = {};
 	socklen_t			recv_socklen = sizeof(recv_sockaddr);
 
@@ -138,7 +137,7 @@ void	receive_loop()
 			error(1, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
 
 		// Packet too short to contain ICMP header
-		if (bytes_recved - ip_hdr_len < sizeof(struct icmphdr))
+		if (bytes_recved - ip_hdr_len < (ssize_t)sizeof(struct icmphdr))
 		{
 			fprintf(stderr, "packet too short (%ld bytes) from %s\n", bytes_recved - ip_hdr_len, hostname);
 			continue;
@@ -287,7 +286,7 @@ void	verbose_icmp_dump(struct icmp *recved_packet)
 
 	printf("IP Hdr Dump:\n ");
 	for (uint i = 0; i < sizeof(struct iphdr); ++i)
-		printf("%02x%s", *((char*)orig_ip + i), (i % 2 ? " " : ""));
+		printf("%02x%s", *((u_char*)orig_ip + i), (i % 2 ? " " : ""));
 	printf("\n");
 	printf("Vr HL TOS  Len   ID Flg  off TTL Pro  cks      Src\tDst\tData\n");
 	printf (" %1x  %1x  %02x %04x %04x   %1x %04x  %02x  %02x %04x",
