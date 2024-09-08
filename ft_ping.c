@@ -31,9 +31,8 @@ struct ft_ping_state	g_state = {
 	.ping_tgt_addr = {},
 	.sent = 0,
 	.received = 0,
-	.rtt = {
+	.packets = {
 		.data = NULL,
-		.size = 0,
 		.capacity = 0,
 	},
 };
@@ -89,27 +88,25 @@ int	main(int argc, char *const *argv)
 	g_state.sockaddr = *(struct sockaddr*)ipv4;
 	g_state.ping_tgt_addr = ipv4->sin_addr;
 	g_state.ping_tgt_name = argv[optind];
-	g_state.rtt = (struct Vector){
-		.data = malloc(8 * sizeof(float)),
-		.size = 0,
-		.capacity = 8
+	g_state.packets = (struct PacketStorageVector){
+		.data = calloc(16, sizeof(struct packet_storage)),
+		.capacity = 16,
 	};
-	if (!g_state.ping_tgt_name || !g_state.rtt.data)
+	if (!g_state.ping_tgt_name || !g_state.packets.data)
 		error(1, errno, "fatal error");
 
 	freeaddrinfo(tgtinfo);
 	signal(SIGALRM, sigalrm_handler);
 	signal(SIGINT, finish_ping);
 
-	char ip_str_buf[3 * 4 + 4];
+	char ip_str_buf[INET_ADDRSTRLEN];
 	inet_ntop(AF_INET, &g_state.ping_tgt_addr, ip_str_buf, sizeof(ip_str_buf));
 	printf("PING %s (%s): %ld data bytes",
 		g_state.ping_tgt_name, ip_str_buf, PACKET_LEN - sizeof(struct icmphdr));
 	if (g_state.verbose)
 		printf(", id 0x%04x = %d", g_state.pid, g_state.pid);
-	putchar('\n');
+	printf("\n");
 	sigalrm_handler();
-	// alarm(g_state.interval);
 
 	receive_loop();
 }
@@ -140,9 +137,17 @@ void	receive_loop()
 		if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
 			error(3, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
 
+		// Packet too short to contain ICMP header
+		if (bytes_recved - ip_hdr_len < sizeof(struct icmphdr))
+		{
+			fprintf(stderr, "packet too short (%ld bytes) from %s\n", bytes_recved - ip_hdr_len, hostname);
+			continue;
+		}
+
+		// If ICMP Data segment is too short, checksum will not match so that also checks it
 		uint16_t cksum = icmp->icmp_cksum;
 		icmp->icmp_cksum = 0;
-		if (cksum != get_inet_checksum(icmp, ntohs(ip->ip_len) - ip_hdr_len))
+		if (cksum != get_inet_checksum(icmp, bytes_recved - ip_hdr_len))
 			fprintf(stderr, "checksum mismatch from %s\n", hostname);
 		icmp->icmp_cksum = cksum;	// Restore it just in case we use it later for some reason
 
@@ -158,11 +163,11 @@ void	receive_loop()
 			gettimeofday(&now, NULL);
 			timersub(&now, sent_time, &delta);
 			float rtt_ms = ((float)delta.tv_sec * 1000.0f) + ((float)delta.tv_usec / 1000.0f);
-
-			add_rtt_to_vector(&g_state.rtt, rtt_ms);
-
-			g_state.received++;
 			printf("icmp_seq=%d, ttl=%d, time=%.03f ms", icmp->icmp_seq, ip->ip_ttl, rtt_ms);
+
+			if (add_packet_to_vector(rtt_ms, icmp->icmp_seq) == true)
+				printf(" (DUP!)");
+			g_state.received++;
 		}
 		else
 		{
@@ -230,28 +235,38 @@ void	finish_ping()
 	printf("%u packets transmitted, %u packets received, %.0f%% packet loss\n",
 		g_state.sent, g_state.received, packet_loss * 100);
 
+	// Calculations are not really efficient if many packets are dropped but that's not important
 	if (g_state.received > 0)
 	{
 		float min_rtt = +INFINITY;
 		float max_rtt = -INFINITY;
 		float avg_rtt = 0.0f;
-		for (size_t i = 0; i < g_state.rtt.size; ++i)
+		uint16_t num_packets = 0;
+		for (size_t i = 0; i < g_state.packets.capacity; ++i)
 		{
-			min_rtt = min_rtt > g_state.rtt.data[i] ? g_state.rtt.data[i] : min_rtt;
-			max_rtt = max_rtt < g_state.rtt.data[i] ? g_state.rtt.data[i] : max_rtt;
-			avg_rtt += g_state.rtt.data[i];
+			struct packet_storage *p = &g_state.packets.data[i];
+			if (!p->received)
+				continue;
+			++num_packets;
+			min_rtt = min_rtt > p->rtt ? p->rtt : min_rtt;
+			max_rtt = max_rtt < p->rtt ? p->rtt : max_rtt;
+			avg_rtt += p->rtt;
 		}
-		avg_rtt /= g_state.rtt.size;
+		avg_rtt /= num_packets;
 
 		float squared_differences = 0.0f;
-		for (size_t i = 0; i < g_state.rtt.size; ++i)
-			squared_differences += powf(g_state.rtt.data[i] - avg_rtt, 2);
-		float stddev = sqrtf(squared_differences / (g_state.rtt.size - 1));
+		for (size_t i = 0; i < g_state.packets.capacity; ++i)
+		{
+			if (!g_state.packets.data[i].received)
+				continue;
+			squared_differences += powf(g_state.packets.data[i].rtt - avg_rtt, 2);
+		}
+		float stddev = sqrtf(squared_differences / (num_packets - 1));
 
 		printf("round-trip min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
 			min_rtt, avg_rtt, max_rtt, stddev);
 	}
-	free(g_state.rtt.data);
+	free(g_state.packets.data);
 	close(g_state.sockfd);
 	exit(0);
 }

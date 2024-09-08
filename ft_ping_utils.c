@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <error.h>
+#include <string.h>
 
 // Thank you RFC1071 for giving me the algorithm
 uint16_t	get_inet_checksum(void *addr, size_t count)
@@ -91,20 +92,24 @@ const char	*get_ICMP_msg_string(uint16_t icmp_type, uint16_t icmp_code)
 	return msg;
 }
 
-void	add_rtt_to_vector(struct Vector *vec, float rtt)
+// Store packet's RTT data in vector, at index of icmp_seq. If packet is duplicated, returns true.
+bool	add_packet_to_vector(float rtt, uint16_t icmp_sequence)
 {
-	if (vec->size == vec->capacity)
+	struct PacketStorageVector *vec = &g_state.packets;
+
+	if (icmp_sequence >= vec->capacity)
 	{
-		vec->data = reallocarray(vec->data, vec->capacity * 2, sizeof(vec->data[0]));
-		if (!vec->data)
-		{
-			vec->data = reallocarray(vec->data, ++vec->capacity, sizeof(vec->data[0]));
-			if (!vec->data)
-				error(1, errno, "failed to store RTT");
-		}
-		else
-			vec->capacity *= 2;
+		vec->data = reallocarray(vec->data, icmp_sequence * 2, sizeof(vec->data[0]));
+		// If some packets are dropped and we don't bzero, the received flag could be
+		// wrong and it would mess things up
+		bzero(&vec->data[icmp_sequence], (icmp_sequence * 2 - vec->capacity) * sizeof(vec->data[0]));
+		vec->capacity = icmp_sequence * 2;
 	}
-	vec->data[vec->size++] = rtt;
-	return;
+	if (vec->data[icmp_sequence].received)
+		return true;
+	vec->data[icmp_sequence] = (struct packet_storage){
+		.rtt = rtt,
+		.received = true
+	};
+	return false;
 }

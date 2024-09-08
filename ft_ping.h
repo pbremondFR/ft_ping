@@ -20,6 +20,15 @@ struct packet_storage
 	bool	received;	// Is used to detect duplicates
 };
 
+// Lightweight Vector storing data about RTT and duplicated packets
+// Store each packet's RTT at the index of its ICMP sequence, and set
+// 'received' to true. If it's already true, then you have a duplicate packet.
+struct PacketStorageVector
+{
+	struct packet_storage	*data;
+	size_t	capacity;
+};
+
 struct ft_ping_state
 {
 	// Volatile just in case signals fuck this up
@@ -40,11 +49,7 @@ struct ft_ping_state
 	volatile uint	sent;
 	unsigned int	received;
 
-	struct Vector {	// Lightweight vector of each received packet's RTT
-		float	*data;
-		size_t	size;
-		size_t	capacity;
-	}	rtt;
+	struct PacketStorageVector	packets;
 };
 
 extern struct ft_ping_state	g_state;
@@ -53,7 +58,7 @@ void		parse_options(int argc, char *const *argv);
 void		sigalrm_handler();
 void		finish_ping();
 void		receive_loop();
-void		add_rtt_to_vector(struct Vector *vec, float rtt);
+bool		add_packet_to_vector(float rtt, uint16_t icmp_sequence);
 uint16_t	get_inet_checksum(void *addr, size_t count);
 const char	*get_ICMP_msg_string(uint16_t icmp_type, uint16_t icmp_code);
 void		verbose_icmp_dump(struct icmp *packet);
