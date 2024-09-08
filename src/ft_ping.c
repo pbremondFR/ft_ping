@@ -41,6 +41,8 @@ struct ft_ping_state	g_state = {
 int	main(int argc, char *const *argv)
 {
 	parse_options(argc, argv);
+	// printf("Num to send: %d, Verbose: %d, Numeric: %d, TTL: %u, TOS: %u, Interval: %u, Timeout: %d\n",
+	// 	g_state.num_to_send, g_state.verbose, g_state.numeric, g_state.ttl, g_state.tos, g_state.interval, g_state.timeout);
 
 	if (optind == argc)
 		error(1, 0, "missing host operand");
@@ -89,8 +91,8 @@ int	main(int argc, char *const *argv)
 		printf(", id 0x%04x = %d", g_state.pid, g_state.pid);
 	printf("\n");
 	gettimeofday(&g_state.started_at, NULL);
-	sigalrm_handler();
 
+	sigalrm_handler();	// Launch ping routine
 	receive_loop();
 }
 

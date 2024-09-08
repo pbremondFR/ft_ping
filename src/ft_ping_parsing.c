@@ -27,16 +27,19 @@ Send ICMP ECHO_REQUEST packets to network hosts.\n\
 Report bugs to NOBODY I DON'T CARE.\
 ";
 
-static long parse_numerical_flag(char *arg)
+static int32_t parse_numerical_flag(char *arg, int32_t min, int32_t max)
 {
-	char *endptr = NULL;
 	if (!arg)
-		return LONG_MIN;
-	long res = strtol(arg, &endptr, 10);
-	if (!endptr || *endptr != 0)
-		return LONG_MIN;
-	else
-		return res;
+		error(1, 0, "missing argument");
+	char *endptr = NULL;
+	long long res = strtoll(arg, &endptr, 10);
+	if (*arg == '\0' || *endptr != '\0')
+		error(1, 0, "invalid value (`%s' near `%s')", arg, endptr);
+	else if (res < min)
+		error(1, 0, "option value too small: %s", arg);
+	else if (res > max)
+		error(1, 0, "option value too big: %s", arg);
+	return (int)res;
 }
 
 static struct option	long_options[] = {
@@ -62,26 +65,17 @@ void	parse_options(int argc, char *const *argv)
 		{
 		case TTL_OPTION_FLAG:	// TTL has no single char flag option
 		{
-			long ttl = parse_numerical_flag(optarg);
-			if (ttl <= 0 || ttl > UINT32_MAX)
-				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= 255", ttl);
-			g_state.ttl = (uint32_t)ttl;
+			g_state.ttl = (uint8_t)parse_numerical_flag(optarg, 1, UINT8_MAX);
 			break;
 		}
 		case 'c':
 		{
-			long count = parse_numerical_flag(optarg);
-			if (count <= 0 || count >= SIG_ATOMIC_MAX)
-				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= %d", count, SIG_ATOMIC_MAX);
-			g_state.num_to_send = (sig_atomic_t)count;
+			g_state.num_to_send = (sig_atomic_t)parse_numerical_flag(optarg, 1, SIG_ATOMIC_MAX);
 			break;
 		}
 		case 'i':
 		{
-			long interval = parse_numerical_flag(optarg);
-			if (interval <= 0 || interval >= SIG_ATOMIC_MAX)
-				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= %d", interval, UINT_MAX);
-			g_state.interval = (unsigned int)interval;
+			g_state.interval = (uint32_t)parse_numerical_flag(optarg, 1, INT32_MAX);
 			break;
 		}
 		case 'n':
@@ -91,10 +85,7 @@ void	parse_options(int argc, char *const *argv)
 		}
 		case 'T':
 		{
-			long tos = parse_numerical_flag(optarg);
-			if (tos < 0 || tos > UINT8_MAX)
-				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= 255", tos);
-			g_state.tos = tos;
+			g_state.tos = (uint8_t)parse_numerical_flag(optarg, 0, UINT8_MAX);
 			break;
 		}
 		case 'v':
@@ -102,10 +93,7 @@ void	parse_options(int argc, char *const *argv)
 			break;
 		case 'w':
 		{
-			long timeout = parse_numerical_flag(optarg);
-			if (timeout < 1 || timeout >= INT_MAX)
-				error(1, 0, "invalid argument: '%ld': out of range: 0 <= value <= %d", timeout, INT_MAX);
-			g_state.timeout = timeout;
+			g_state.timeout = (int32_t)parse_numerical_flag(optarg, 1, INT32_MAX);
 			break;
 		}
 		case '?':
@@ -117,7 +105,7 @@ void	parse_options(int argc, char *const *argv)
 				puts(help_str);
 				exit(0);
 			default:
-				puts("Try ping --help or ping --usage for more information");
+				puts("Try ping --help for more information");
 				exit(64);
 			}
 		}

@@ -35,10 +35,10 @@ struct ft_ping_state
 	volatile sig_atomic_t	num_to_send;
 	bool			verbose;
 	bool			numeric;
-	uint32_t		ttl;
-	uint32_t		tos;
-	unsigned int	interval;
-	int				timeout;
+	uint8_t			ttl;
+	uint8_t			tos;
+	uint32_t		interval;
+	int32_t			timeout;
 
 	int				sockfd;
 	struct sockaddr	sockaddr;
