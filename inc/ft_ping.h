@@ -34,7 +34,7 @@ struct ft_ping_state
 	// Volatile just in case signals fuck this up
 	volatile sig_atomic_t	num_to_send;
 	bool			verbose;
-	bool			numeric;	// TODO: Don't resolve host address?
+	bool			numeric;
 	uint32_t		ttl;
 	uint32_t		tos;
 	unsigned int	interval;

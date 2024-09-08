@@ -99,10 +99,10 @@ void	receive_loop()
 	char				hostname[256] = {};
 	char				recv_buf[256] = {};
 	struct sockaddr		recv_sockaddr = {};
-	socklen_t			recv_socklen = sizeof(recv_sockaddr);
 
 	while(true)
 	{
+		socklen_t recv_socklen = sizeof(recv_sockaddr);
 		ssize_t bytes_recved = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
 			&recv_sockaddr, &recv_socklen);
 		if (bytes_recved < 0)
