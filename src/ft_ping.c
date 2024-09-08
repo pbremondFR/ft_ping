@@ -41,7 +41,6 @@ struct ft_ping_state	g_state = {
 int	main(int argc, char *const *argv)
 {
 	parse_options(argc, argv);
-	printf("num to send: %d, ttl: %d, verbose: %d, interval: %d\n", g_state.num_to_send, g_state.ttl, g_state.verbose, g_state.interval);
 
 	if (optind == argc)
 		error(1, 0, "missing host operand");
@@ -53,27 +52,9 @@ int	main(int argc, char *const *argv)
 	hints.ai_protocol = 0;
 	hints.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG | AI_CANONNAME;
 
-	int result = getaddrinfo(argv[optind], NULL, &hints, &tgtinfo);
-	if (result == 0)
-	{
-		for (struct addrinfo *head = tgtinfo; head; head = head->ai_next)
-		{
-			printf("ai_flags:     %d\n", 	head->ai_flags);
-			printf("ai_family:    %d\n", 	head->ai_family);
-			printf("ai_socktype:  %d\n", 	head->ai_socktype);
-			printf("ai_protocol:  %d\n", 	head->ai_protocol);
-			printf("ai_addrlen:   %u\n", 	head->ai_addrlen);
-			printf("ai_addr:      %p\n", 	head->ai_addr);
-			printf("ai_canonname: %s\n",	head->ai_canonname);
-			printf("ai_next:      %p\n", 	head->ai_next);
-
-			struct sockaddr_in *ipv4 = (struct sockaddr_in*)head->ai_addr;
-			printf("IP is %s\n", inet_ntoa(ipv4->sin_addr));
-			puts("========================\n");
-		}
-	}
-	else
-		error(1, 0, "unknown host: %s", gai_strerror(result));
+	int gai_error = getaddrinfo(argv[optind], NULL, &hints, &tgtinfo);
+	if (gai_error != 0)
+		error(1, 0, "unknown host: %s", gai_strerror(gai_error));
 
 	struct sockaddr_in *ipv4 = (struct sockaddr_in*)tgtinfo->ai_addr;
 
@@ -125,7 +106,7 @@ void	receive_loop()
 		ssize_t bytes_recved = recvfrom(g_state.sockfd, recv_buf, sizeof(recv_buf), 0,
 			&recv_sockaddr, &recv_socklen);
 		if (bytes_recved < 0)
-			error(1, errno, "recvfrom call failed");
+			error(1, errno, "recvfrom failed");
 
 		struct ip *ip = (struct ip*)recv_buf;
 		if (ip->ip_p != IPPROTO_ICMP)
@@ -134,9 +115,10 @@ void	receive_loop()
 		uint16_t ip_hdr_len = (ip->ip_hl * 4);
 		struct icmp *icmp = (struct icmp*)(recv_buf + ip_hdr_len);
 
-		int gai_err;
-		if ((gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, 0)) != EXIT_SUCCESS)
-			error(1, 0, "getnameinfo() call failed: %s", gai_strerror(gai_err));
+		int gai_flags = g_state.numeric ? NI_NUMERICHOST : 0;
+		int gai_err = getnameinfo(&recv_sockaddr, recv_socklen, hostname, sizeof(hostname), NULL, 0, gai_flags);
+		if (gai_err != 0)
+			error(1, 0, "getnameinfo failed: %s", gai_strerror(gai_err));
 
 		// Packet too short to contain ICMP header
 		if (bytes_recved - ip_hdr_len < (ssize_t)sizeof(struct icmphdr))
